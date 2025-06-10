@@ -11,7 +11,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def fetch_prompts():
-    print("📦 Fetching prompts from Supabase...")
+    print("\n📦 Fetching prompts from Supabase...")
     res = requests.get(
         f"{SUPABASE_URL}/rest/v1/prompts?select=*,brand:brands(name)",
         headers={
@@ -28,7 +28,7 @@ def fetch_prompts():
     return prompts
 
 def evaluate_prompt(prompt_id, prompt_text, brand_id, brand_name):
-    print(f"🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
+    print(f"\n🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
     try:
         response = client.chat.completions.create(
             model="gpt-4",
@@ -67,11 +67,11 @@ def evaluate_prompt(prompt_id, prompt_text, brand_id, brand_name):
         print(f"⚠️ OpenAI Error for prompt '{prompt_text}': {e}")
 
 def run_all():
-    print(f"🚀 Starting prompt runner: {datetime.utcnow().isoformat()}")
+    print(f"\n🚀 Running @ {datetime.utcnow().isoformat()} UTC")
     prompts = fetch_prompts()
     for p in prompts:
         evaluate_prompt(p["id"], p["prompt_text"], p["brand_id"], p["brand"]["name"])
-    print("✅ Done.")
+    print("\n✅ Done.")
 
 if __name__ == "__main__":
     run_all()
