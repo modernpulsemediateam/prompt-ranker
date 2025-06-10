@@ -3,15 +3,17 @@ import requests
 from openai import OpenAI
 from datetime import datetime
 
-# Load secrets
+# Load secrets from environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# OpenAI client for new SDK (v1+)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# STEP 1: Fetch prompts from Supabase
 def fetch_prompts():
-    print("\n📦 Fetching prompts from Supabase...")
+    print("📦 Fetching prompts from Supabase...")
     res = requests.get(
         f"{SUPABASE_URL}/rest/v1/prompts?select=*,brand:brands(name)",
         headers={
@@ -27,11 +29,12 @@ def fetch_prompts():
     print(f"📦 Found {len(prompts)} prompts")
     return prompts
 
+# STEP 2: Evaluate prompt with OpenAI and upload results
 def evaluate_prompt(prompt_id, prompt_text, brand_id, brand_name):
     print(f"\n🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4",  # or "gpt-3.5-turbo" if preferred
             messages=[{"role": "user", "content": prompt_text}]
         )
         result_text = response.choices[0].message.content
@@ -43,7 +46,7 @@ def evaluate_prompt(prompt_id, prompt_text, brand_id, brand_name):
             "brand_id": brand_id,
             "ai_result": result_text,
             "position": position,
-            "brand_mentioned": mentioned,
+            "brand_mentioned": mentioned
         }
 
         print("📤 Uploading result to Supabase...")
@@ -66,6 +69,7 @@ def evaluate_prompt(prompt_id, prompt_text, brand_id, brand_name):
     except Exception as e:
         print(f"⚠️ OpenAI Error for prompt '{prompt_text}': {e}")
 
+# STEP 3: Run all prompts
 def run_all():
     print(f"\n🚀 Running @ {datetime.utcnow().isoformat()} UTC")
     prompts = fetch_prompts()
