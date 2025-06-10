@@ -42,7 +42,7 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position):
         "brand_id": brand_id,
         "prompt_text": prompt_text,
         "result": result,
-        "position": position,
+        "position": str(position),  # Make sure "Not Found" works
         "created_at": datetime.utcnow().isoformat()
     }
     response = requests.post(
@@ -69,7 +69,10 @@ def main():
 
         result = run_prompt(prompt_text)
         if result:
-            position = 1  # Simulated position logic
+            if brand_name.lower() in result.lower():
+                position = 1
+            else:
+                position = "Not Found"
             upload_result(prompt_id, brand_id, prompt_text, result, position)
 
     print("✅ Done.")
