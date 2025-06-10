@@ -1,81 +1,79 @@
 import os
+import openai
 import requests
-from openai import OpenAI
 from datetime import datetime
 
-# Load secrets from environment variables
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Load environment variables
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
-# OpenAI client for new SDK (v1+)
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 
-# STEP 1: Fetch prompts from Supabase
+headers = {
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+}
+
 def fetch_prompts():
     print("📦 Fetching prompts from Supabase...")
-    res = requests.get(
-        f"{SUPABASE_URL}/rest/v1/prompts?select=*,brand:brands(name)",
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}"
-        }
-    )
-    print(f"🔍 Fetch status: {res.status_code}")
-    if res.status_code != 200:
-        print(f"❌ Failed to fetch prompts: {res.text}")
+    url = f"{SUPABASE_URL}/rest/v1/prompts?select=*,brand:brands!prompts_brand_id_fkey(name)"
+    response = requests.get(url, headers=headers)
+    print(f"🔍 Fetch status: {response.status_code}")
+    if response.status_code != 200:
+        print("❌ Failed to fetch prompts:", response.text)
         return []
-    prompts = res.json()
-    print(f"📦 Found {len(prompts)} prompts")
-    return prompts
+    return response.json()
 
-# STEP 2: Evaluate prompt with OpenAI and upload results
-def evaluate_prompt(prompt_id, prompt_text, brand_id, brand_name):
-    print(f"\n🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
+def run_prompt(prompt_text):
     try:
-        response = client.chat.completions.create(
-            model="gpt-4",  # or "gpt-3.5-turbo" if preferred
-            messages=[{"role": "user", "content": prompt_text}]
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt_text}],
         )
-        result_text = response.choices[0].message.content
-        mentioned = brand_name.lower() in result_text.lower()
-        position = 1 if mentioned else 11
-
-        payload = {
-            "prompt_id": prompt_id,
-            "brand_id": brand_id,
-            "ai_result": result_text,
-            "position": position,
-            "brand_mentioned": mentioned
-        }
-
-        print("📤 Uploading result to Supabase...")
-        res = requests.post(
-            f"{SUPABASE_URL}/rest/v1/prompt_results",
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
-            },
-            json=payload
-        )
-
-        if res.status_code == 201:
-            print(f"✅ Uploaded result for: '{prompt_text}'")
-        else:
-            print(f"❌ Upload failed: {res.status_code} → {res.text}")
-
+        return response.choices[0].message["content"]
     except Exception as e:
-        print(f"⚠️ OpenAI Error for prompt '{prompt_text}': {e}")
+        print(f"⚠️ Error with '{prompt_text}':", str(e))
+        return None
 
-# STEP 3: Run all prompts
-def run_all():
-    print(f"\n🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+def upload_result(prompt_id, brand_id, prompt_text, result, position):
+    payload = {
+        "prompt_id": prompt_id,
+        "brand_id": brand_id,
+        "prompt_text": prompt_text,
+        "result": result,
+        "position": position,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    response = requests.post(
+        f"{SUPABASE_URL}/rest/v1/prompt_results",
+        headers={**headers, "Content-Type": "application/json"},
+        json=payload
+    )
+    if response.status_code not in [200, 201]:
+        print("❌ Upload failed:", response.text)
+    else:
+        print("✅ Uploaded result")
+
+def main():
     prompts = fetch_prompts()
-    for p in prompts:
-        evaluate_prompt(p["id"], p["prompt_text"], p["brand_id"], p["brand"]["name"])
-    print("\n✅ Done.")
+    print(f"📦 Found {len(prompts)} prompts")
+
+    for prompt in prompts:
+        prompt_text = prompt["prompt_text"]
+        brand_id = prompt["brand_id"]
+        prompt_id = prompt["id"]
+        brand_name = prompt.get("brand", {}).get("name", "Unknown")
+
+        print(f"🧠 Evaluating prompt: {prompt_text} for brand: {brand_name}")
+
+        result = run_prompt(prompt_text)
+        if result:
+            position = 1  # Simulated position logic
+            upload_result(prompt_id, brand_id, prompt_text, result, position)
+
+    print("✅ Done.")
 
 if __name__ == "__main__":
-    run_all()
+    print(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+    main()
