@@ -3,7 +3,6 @@ import requests
 import os
 from datetime import datetime
 
-# Environment variables
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_KEY"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -50,9 +49,9 @@ def get_position_from_result(result_text, brand_name):
 
 
 def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name):
-    # 👇 Replace position 11 with None (aka null)
-    if str(position).strip() == "11":
-        print("⚠️ Position 11 found — replacing with null")
+    # ✅ Convert 11 to null safely
+    if position == 11:
+        print("⚠️ Position 11 detected — replacing with null before upload")
         position = None
 
     print(f"\n📤 Uploading result to Supabase...")
@@ -68,6 +67,7 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name
         "result": result,
         "created_at": datetime.utcnow().isoformat()
     }
+
     if position is not None:
         payload["position"] = position
 
