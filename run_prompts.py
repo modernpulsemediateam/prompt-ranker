@@ -1,111 +1,131 @@
-from openai import OpenAI
-import requests
 import os
-from datetime import datetime
+import uuid
+import datetime
+import csv
+import openai
+from supabase import create_client, Client
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_KEY"]
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+# Attempt to load local .env if present (for local development environments)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv is not installed or not needed in the automated environment
+    pass
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Retrieve API keys and URLs from environment variables for flexibility in different environments
+openai.api_key = os.getenv("OPENAI_API_KEY")
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_KEY")  # Use your Supabase service role key
 
-headers = {
-    "apikey": SUPABASE_SERVICE_ROLE_KEY,
-    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-}
+# Validate that required environment variables are set
+if not openai.api_key:
+    raise EnvironmentError("OpenAI API key not found in environment variables.")
+if not supabase_url or not supabase_key:
+    raise EnvironmentError("Supabase URL or service key not found in environment variables.")
 
+# Initialize Supabase client
+supabase: Client = create_client(supabase_url, supabase_key)
+table_name = "prompt_results"  # Update this to your actual Supabase table name if different
 
-def fetch_prompts():
-    print("📦 Fetching prompts from Supabase...")
-    url = f"{SUPABASE_URL}/rest/v1/prompts?select=*,brand:brands!prompts_brand_id_fkey(name)"
-    response = requests.get(url, headers=headers)
-    print(f"🔍 Fetch status: {response.status_code}")
-    return response.json() if response.status_code == 200 else []
+# Read input prompts from CSV (assuming a CSV file provides prompt data)
+input_file = "AI Rank Tracker - June.csv"
+prompts = []
+with open(input_file, newline='') as csvfile:
+    reader = csv.DictReader(csvfile)
+    for row in reader:
+        prompts.append(row)
 
+# Loop through each prompt entry and process it
+for entry in prompts:
+    prompt_id = entry.get("prompt_id")
+    brand_id = entry.get("brand_id")
+    brand_name = entry.get("brand_name")
+    prompt_text = entry.get("prompt_text")
 
-def run_prompt(prompt_text):
+    # Skip this entry if any required field is missing
+    if not (prompt_id and brand_id and brand_name and prompt_text):
+        print(f"Skipping entry due to missing data: {entry}", flush=True)
+        continue
+
+    # Call the OpenAI API to get a response for the prompt
     try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt_text}]
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt_text}],
+            temperature=0
         )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error: {str(e)}"
+        answer_text = response["choices"][0]["message"]["content"].strip()
+    except Exception as api_error:
+        print(f"OpenAI API call failed for prompt_id {prompt_id}: {api_error}", flush=True)
+        continue
 
+    # Determine if the brand is mentioned in the AI response and find its position
+    brand_mentioned = False
+    position = 11  # default position = 11 (meaning "not found in top 10" by default)
+    brand_lower = brand_name.lower()
+    answer_lower = answer_text.lower()
 
-def get_position_from_result(result_text, brand_name):
-    lines = result_text.lower().split("\n")
-    brand = brand_name.strip().lower()
+    if brand_lower in answer_lower:
+        # The brand name appears somewhere in the answer text.
+        # Split the answer into lines for analysis (ignore empty lines).
+        lines = [line.strip() for line in answer_text.splitlines() if line.strip() != ""]
+        for line in lines:
+            # Check if the line starts with a numeric rank (e.g., "1.", "2)", etc.)
+            import re
+            match = re.match(r'^(\d+)[\.\)]', line)
+            if match:
+                rank = int(match.group(1))
+                if rank <= 10 and brand_lower in line.lower():
+                    # Brand found within the top 10 list
+                    brand_mentioned = True
+                    position = rank
+                    break
+                elif rank > 10 and brand_lower in line.lower():
+                    # Brand found but its rank is beyond 10
+                    brand_mentioned = False
+                    position = 11
+                    break
 
-    for idx, line in enumerate(lines):
-        if brand in line:
-            position = idx + 1
-            print(f"✅ Brand found at line {position}")
-            return position
+    # DEBUG: Print the computed position for this prompt and brand (for logging/debugging purposes)
+    print(f"Prompt ID {prompt_id} | Brand: '{brand_name}' | Computed position = {position}", flush=True)
+    # FIX: The above print ensures the position value (including 11 or actual rank) is shown in logs for debugging.
 
-    print("❌ Brand not found in result.")
-    return None
-
-
-def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name):
-    # ✅ Convert 11 to null safely
+    # Prepare the position value for database insertion
+    position_to_upload = None if position == 11 else position
     if position == 11:
-        print("⚠️ Position 11 detected — replacing with null before upload")
-        position = None
+        # FIX: Convert position 11 to None to satisfy the database constraint (disallowing value 11 in position column)
+        print(f"Position is 11 (brand not in top 10). Setting position to None for Supabase upload.", flush=True)
 
-    print(f"\n📤 Uploading result to Supabase...")
-    print(f"🔎 Prompt: {prompt_text}")
-    print(f"🔎 Brand: {brand_name}")
-    print(f"📢 Final Position: {position}")
-
-    payload = {
+    # Prepare the data record to insert into Supabase
+    result_id = str(uuid.uuid4())  # Generate a unique UUID for the result record
+    run_date = datetime.date.today().isoformat()  # Current date in ISO format (YYYY-MM-DD)
+    data_record = {
+        "id": result_id,
         "prompt_id": prompt_id,
         "brand_id": brand_id,
-        "prompt_text": prompt_text,
+        "ai_result": answer_text,
+        "position": position_to_upload,
+        "brand_mentioned": brand_mentioned,
+        "run_date": run_date,
         "brand_name": brand_name,
-        "result": result,
-        "created_at": datetime.utcnow().isoformat()
+        "prompt_text": prompt_text
     }
 
-    if position is not None:
-        payload["position"] = position
-
-    response = requests.post(
-        f"{SUPABASE_URL}/rest/v1/prompt_results",
-        headers={**headers, "Content-Type": "application/json"},
-        json=payload,
-    )
-
-    if response.status_code not in [200, 201]:
-        print("❌ Upload failed:", response.text)
-    else:
-        print("✅ Uploaded successfully")
-
-
-def main():
-    print(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
-    prompts = fetch_prompts()
-    print(f"📦 Found {len(prompts)} prompts")
-
-    for prompt in prompts:
-        prompt_text = prompt["prompt_text"]
-        brand_id = prompt["brand_id"]
-        prompt_id = prompt["id"]
-        brand_name = prompt.get("brand", {}).get("name", "").strip()
-
-        print(f"\n🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
-        result = run_prompt(prompt_text)
-
-        if not result:
-            print("❌ No result returned.")
-            continue
-
-        position = get_position_from_result(result, brand_name)
-        upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name)
-
-    print("✅ Done.")
-
-
-if __name__ == "__main__":
-    main()
+    # Insert the record into the Supabase table
+    try:
+        # Attempt the insertion and capture the response
+        response = supabase.table(table_name).insert(data_record).execute()
+        # Check for errors in the response
+        if hasattr(response, "error") and response.error:
+            # supabase-py may return an object with an 'error' attribute
+            print(f"Supabase insert error for prompt_id {prompt_id}: {response.error}", flush=True)
+        elif isinstance(response, dict) and response.get("error"):
+            # In some versions, .execute() might return a dict with an 'error' key
+            print(f"Supabase insert error for prompt_id {prompt_id}: {response.get('error')}", flush=True)
+        else:
+            # If no error, insertion was successful
+            print(f"Inserted result for prompt_id {prompt_id} into Supabase successfully.", flush=True)
+    except Exception as db_error:
+        # Handle exceptions that may occur during the insert (e.g., network issues)
+        print(f"Exception during Supabase insert for prompt_id {prompt_id}: {db_error}", flush=True)
