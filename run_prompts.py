@@ -45,10 +45,17 @@ def get_brave_search_results(query, count=10):
             params=params
         )
         
+        log(f"🔍 Brave API response status: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
             results = data.get('web', {}).get('results', [])
             log(f"🔍 Found {len(results)} search results from Brave")
+            
+            # Debug: Print first few results
+            for i, result in enumerate(results[:3]):
+                log(f"🔍 Result {i+1}: {result.get('title', 'No title')[:50]}...")
+            
             return results
         else:
             log(f"❌ Brave API error: {response.status_code} - {response.text}")
@@ -61,23 +68,35 @@ def get_brave_search_results(query, count=10):
 # Upload Google search results to database
 def upload_google_results(prompt_text, brand_name, search_results):
     """Upload Google search results to the google_results table"""
-    log(f"📤 Uploading Google results for: '{prompt_text}' - Brand: {brand_name}")
+    log(f"📤 Starting Google upload for: '{prompt_text}' - Brand: {brand_name}")
+    
+    if not search_results:
+        log(f"❌ No search results to upload for Google")
+        return
     
     try:
         # Check if brand appears in search results
         brand_found_position = None
+        found_result = None
         
         for i, result in enumerate(search_results, 1):
             title = result.get('title', '').lower()
             description = result.get('description', '').lower()
             url = result.get('url', '').lower()
             
+            log(f"🔍 Google check {i}: Looking for '{brand_name.lower()}' in title/desc/url")
+            
             # Check if brand name appears in title, description, or URL
             if (brand_name.lower() in title or 
                 brand_name.lower() in description or 
                 brand_name.lower() in url):
                 brand_found_position = i
+                found_result = result
+                log(f"✅ Found '{brand_name}' at position {i} in Google results")
                 break
+        
+        if not brand_found_position:
+            log(f"❌ Brand '{brand_name}' not found in Google results")
         
         # Upload the brand's result if found, or mark as not found
         data = {
@@ -85,42 +104,59 @@ def upload_google_results(prompt_text, brand_name, search_results):
             "brand_name": brand_name,
             "prompt_text": prompt_text,
             "position": brand_found_position,
-            "url": search_results[brand_found_position - 1].get('url') if brand_found_position else None,
-            "title": search_results[brand_found_position - 1].get('title') if brand_found_position else None,
-            "description": search_results[brand_found_position - 1].get('description') if brand_found_position else None,
+            "url": found_result.get('url') if found_result else None,
+            "title": found_result.get('title') if found_result else None,
+            "description": found_result.get('description') if found_result else None,
             "run_date": datetime.utcnow().date().isoformat(),
             "created_at": datetime.utcnow().isoformat()
         }
         
+        log(f"📤 Uploading Google data: {data}")
+        
         res = supabase.table("google_results").insert(data).execute()
         if res.data:
-            log(f"✅ Uploaded Google result - Position: {brand_found_position or 'Not Found'}")
+            log(f"✅ Successfully uploaded Google result - Position: {brand_found_position or 'Not Found'}")
+            log(f"✅ Google upload response: {res.data}")
         else:
-            log(f"❌ Google upload failed: {res}")
+            log(f"❌ Google upload failed - no data returned: {res}")
             
     except Exception as e:
         log(f"❌ Google upload exception: {e}")
+        import traceback
+        log(f"❌ Google traceback: {traceback.format_exc()}")
 
 # Upload Bing search results to database
 def upload_bing_results(prompt_text, brand_name, search_results):
     """Upload Bing search results to the bing_results table"""
-    log(f"📤 Uploading Bing results for: '{prompt_text}' - Brand: {brand_name}")
+    log(f"📤 Starting Bing upload for: '{prompt_text}' - Brand: {brand_name}")
+    
+    if not search_results:
+        log(f"❌ No search results to upload for Bing")
+        return
     
     try:
         # Check if brand appears in search results
         brand_found_position = None
+        found_result = None
         
         for i, result in enumerate(search_results, 1):
             title = result.get('title', '').lower()
             description = result.get('description', '').lower()
             url = result.get('url', '').lower()
             
+            log(f"🔍 Bing check {i}: Looking for '{brand_name.lower()}' in title/desc/url")
+            
             # Check if brand name appears in title, description, or URL
             if (brand_name.lower() in title or 
                 brand_name.lower() in description or 
                 brand_name.lower() in url):
                 brand_found_position = i
+                found_result = result
+                log(f"✅ Found '{brand_name}' at position {i} in Bing results")
                 break
+        
+        if not brand_found_position:
+            log(f"❌ Brand '{brand_name}' not found in Bing results")
         
         # Upload the brand's result if found, or mark as not found
         data = {
@@ -128,21 +164,26 @@ def upload_bing_results(prompt_text, brand_name, search_results):
             "brand_name": brand_name,
             "prompt_text": prompt_text,
             "position": brand_found_position,
-            "url": search_results[brand_found_position - 1].get('url') if brand_found_position else None,
-            "title": search_results[brand_found_position - 1].get('title') if brand_found_position else None,
-            "description": search_results[brand_found_position - 1].get('description') if brand_found_position else None,
+            "url": found_result.get('url') if found_result else None,
+            "title": found_result.get('title') if found_result else None,
+            "description": found_result.get('description') if found_result else None,
             "run_date": datetime.utcnow().date().isoformat(),
             "created_at": datetime.utcnow().isoformat()
         }
         
+        log(f"📤 Uploading Bing data: {data}")
+        
         res = supabase.table("bing_results").insert(data).execute()
         if res.data:
-            log(f"✅ Uploaded Bing result - Position: {brand_found_position or 'Not Found'}")
+            log(f"✅ Successfully uploaded Bing result - Position: {brand_found_position or 'Not Found'}")
+            log(f"✅ Bing upload response: {res.data}")
         else:
-            log(f"❌ Bing upload failed: {res}")
+            log(f"❌ Bing upload failed - no data returned: {res}")
             
     except Exception as e:
         log(f"❌ Bing upload exception: {e}")
+        import traceback
+        log(f"❌ Bing traceback: {traceback.format_exc()}")
 
 # Format search results for AI analysis
 def format_search_results_for_ai(search_results):
@@ -187,14 +228,16 @@ def extract_position(response_text, target_brand):
 
 # Evaluate a single prompt using real search data
 def evaluate_prompt(prompt, brand):
-    log(f"🔍 Getting real search results for: '{prompt}'")
+    log(f"🔍 Starting evaluation for prompt: '{prompt}' and brand: '{brand}'")
     
     # Get real search results from Brave
     search_results = get_brave_search_results(prompt)
     
     if not search_results:
-        log(f"❌ No search results found for '{prompt}'")
+        log(f"❌ No search results found for '{prompt}' - skipping uploads")
         return None, None
+    
+    log(f"📤 Got {len(search_results)} results, proceeding with uploads...")
     
     # Upload to Google and Bing tables (using Brave data as proxy for both)
     upload_google_results(prompt, brand, search_results)
@@ -224,6 +267,7 @@ etc.
 Target brand to pay special attention to: {brand}"""
 
     try:
+        log(f"🧠 Sending request to OpenAI for AI analysis...")
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -235,7 +279,7 @@ Target brand to pay special attention to: {brand}"""
         )
         result_text = response.choices[0].message.content.strip()
         position = extract_position(result_text, brand)
-        log(f"🔍 Final position determined: '{position}' (type: {type(position)})")
+        log(f"🔍 Final AI position determined: '{position}' (type: {type(position)})")
         return result_text, position
     except Exception as e:
         log(f"❌ Error analyzing search results for '{prompt}': {e}")
@@ -272,11 +316,13 @@ def upload_result(prompt_id, result_text, position, brand, original_prompt):
         res = supabase.table("prompt_results").insert(data).execute()
         if res.data:
             log(f"✅ Uploaded AI result for: '{original_prompt}' - Position: {position}")
-            log(f"✅ Supabase response: {res.data}")
+            log(f"✅ AI Supabase response: {res.data}")
         else:
             log(f"❌ AI upload failed: {res}")
     except Exception as e:
         log(f"❌ AI upload exception: {e}")
+        import traceback
+        log(f"❌ AI traceback: {traceback.format_exc()}")
 
 # Main process
 if __name__ == "__main__":
@@ -292,6 +338,7 @@ if __name__ == "__main__":
         # Fetch brands to get brand names
         brands_response = supabase.table("brands").select("id, name").execute()
         brands_dict = {brand['id']: brand['name'] for brand in brands_response.data} if brands_response.data else {}
+        log(f"📦 Found {len(brands_dict)} brands")
 
         for entry in prompts:
             prompt_id = entry['id']
@@ -304,7 +351,10 @@ if __name__ == "__main__":
 
             if result_text:
                 upload_result(prompt_id, result_text, position, brand_name, prompt_text)
-                log("=" * 80)  # Separator between entries
+            else:
+                log(f"❌ Skipping AI upload for '{prompt_text}' - no result text")
+                
+            log("=" * 80)  # Separator between entries
     else:
         log(f"❌ Failed to fetch prompts: {response}")
 
