@@ -34,16 +34,18 @@ def run_prompt(prompt_text):
     except Exception as e:
         return f"Error: {str(e)}"
 
-def upload_result(prompt_id, brand_id, prompt_text, result, position):
+def upload_result(prompt_id, brand_id, prompt_text, result, position=None):
     payload = {
         "prompt_id": prompt_id,
         "brand_id": brand_id,
         "prompt_text": prompt_text,
         "result": result,
-        "position": str(position),
         "created_at": datetime.utcnow().isoformat()
     }
-    print(f"⬆️ Uploading: {position} for {prompt_text}")
+    if position is not None:
+        payload["position"] = str(position)
+
+    print(f"⬆️ Uploading: position={position} for prompt: {prompt_text}")
     response = requests.post(
         f"{SUPABASE_URL}/rest/v1/prompt_results",
         headers={**headers, "Content-Type": "application/json"},
@@ -68,20 +70,12 @@ def main():
         print(f"🔍 Brand: {brand_name}")
 
         result = run_prompt(prompt_text)
+        position = None
 
         if isinstance(result, str):
-            print(f"🧠 AI Output:\n{result}")
-            if brand_name and brand_name in result.lower():
+            result_lower = result.lower()
+            if brand_name and brand_name in result_lower:
                 position = "1"
-            else:
-                position = "0"  # fallback
-        else:
-            position = "0"
-
-        # Just in case ANYTHING tries to return 11 again
-        if position == "11":
-            print("⚠️ Invalid position 11 detected, forcing to 0")
-            position = "0"
 
         upload_result(prompt_id, brand_id, prompt_text, result, position)
 
