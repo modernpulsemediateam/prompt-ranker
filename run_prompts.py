@@ -3,7 +3,7 @@ import requests
 import os
 from datetime import datetime
 
-# Environment setup
+# Environment variables
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_KEY"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -15,12 +15,14 @@ headers = {
     "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
 }
 
+
 def fetch_prompts():
     print("📦 Fetching prompts from Supabase...")
     url = f"{SUPABASE_URL}/rest/v1/prompts?select=*,brand:brands!prompts_brand_id_fkey(name)"
     response = requests.get(url, headers=headers)
     print(f"🔍 Fetch status: {response.status_code}")
     return response.json() if response.status_code == 200 else []
+
 
 def run_prompt(prompt_text):
     try:
@@ -32,29 +34,31 @@ def run_prompt(prompt_text):
     except Exception as e:
         return f"Error: {str(e)}"
 
+
 def get_position_from_result(result_text, brand_name):
-    brand_name = brand_name.lower().strip()
     lines = result_text.lower().split("\n")
+    brand = brand_name.strip().lower()
 
     for idx, line in enumerate(lines):
-        print(f"   Line {idx + 1}: {line.strip()}")
-        if brand_name in line:
-            print(f"✅ Brand found at line {idx + 1}")
-            return idx + 1
-    print("❌ Brand not found.")
+        if brand in line:
+            position = idx + 1
+            print(f"✅ Brand found at line {position}")
+            return position
+
+    print("❌ Brand not found in result.")
     return None
 
-def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name):
-    print(f"\n📤 Uploading result for prompt: {prompt_text}")
-    print(f"📢 Calculated position: {position}")
 
-    # If position is None or 11, skip uploading
-    if position is None:
-        print("⛔ Skipping upload — no position found.")
-        return
+def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name):
+    # 👇 Replace position 11 with None (aka null)
     if str(position).strip() == "11":
-        print("⛔ Skipping upload — illegal position 11.")
-        return
+        print("⚠️ Position 11 found — replacing with null")
+        position = None
+
+    print(f"\n📤 Uploading result to Supabase...")
+    print(f"🔎 Prompt: {prompt_text}")
+    print(f"🔎 Brand: {brand_name}")
+    print(f"📢 Final Position: {position}")
 
     payload = {
         "prompt_id": prompt_id,
@@ -62,9 +66,10 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name
         "prompt_text": prompt_text,
         "brand_name": brand_name,
         "result": result,
-        "position": position,
         "created_at": datetime.utcnow().isoformat()
     }
+    if position is not None:
+        payload["position"] = position
 
     response = requests.post(
         f"{SUPABASE_URL}/rest/v1/prompt_results",
@@ -76,6 +81,7 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name
         print("❌ Upload failed:", response.text)
     else:
         print("✅ Uploaded successfully")
+
 
 def main():
     print(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
@@ -99,6 +105,7 @@ def main():
         upload_result(prompt_id, brand_id, prompt_text, result, position, brand_name)
 
     print("✅ Done.")
+
 
 if __name__ == "__main__":
     main()
