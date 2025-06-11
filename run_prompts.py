@@ -1,99 +1,97 @@
 import os
-import uuid
 import openai
 import requests
+import uuid
 from datetime import datetime
 from supabase import create_client, Client
+import re
 
-# Init
-openai.api_key = os.getenv("OPENAI_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Set up OpenAI and Supabase
+openai.api_key = os.environ['OPENAI_API_KEY']
+SUPABASE_URL = os.environ['SUPABASE_URL']
+SUPABASE_KEY = os.environ['SUPABASE_KEY']
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-print(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+# Logging helper
+def log(msg):
+    print(msg, flush=True)
 
-# Fetch prompts
-print("📦 Fetching prompts from Supabase...")
-response = supabase.table("prompts").select("*").execute()
-if response.status_code != 200:
-    raise Exception(f"❌ Failed to fetch prompts: {response.status_code}")
-prompts = response.data
-print(f"📦 Found {len(prompts)} prompts")
-
-# Eval function
-def evaluate_prompt(prompt_text):
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "Return a numbered list of companies."},
-            {"role": "user", "content": prompt_text},
-        ],
-        temperature=0.2,
-        max_tokens=512,
-    )
-    return response.choices[0].message.content.strip()
-
-# Parse position
+# Extract position from AI response (1–10 only, else None)
 def extract_position(response_text):
     lines = response_text.strip().splitlines()
     for line in lines:
-        if line.strip().startswith("1."):
-            return 1
-        if line.strip().startswith("2."):
-            return 2
-        if line.strip().startswith("3."):
-            return 3
-        if line.strip().startswith("4."):
-            return 4
-        if line.strip().startswith("5."):
-            return 5
-        if line.strip().startswith("6."):
-            return 6
-        if line.strip().startswith("7."):
-            return 7
-        if line.strip().startswith("8."):
-            return 8
-        if line.strip().startswith("9."):
-            return 9
-        if line.strip().startswith("10."):
-            return 10
-    return None  # If not in top 10, don't assign 11
+        match = re.match(r"(\d+)\.\s", line.strip())
+        if match:
+            num = int(match.group(1))
+            if 1 <= num <= 10:
+                return num
+            else:
+                return None
+    return None
 
-# Run eval
-for prompt in prompts:
-    prompt_id = prompt["id"]
-    text = prompt["prompt"]
-    brand = prompt.get("brand", "")
-    print(f"🧠 Evaluating prompt: '{text}' for brand: {brand}")
-
+# Evaluate a single prompt
+def evaluate_prompt(prompt, brand):
+    full_prompt = f"You are ranking search relevance. A user searched for: '{prompt}'\nBrand: {brand}\n\nGive a list of search results ranked by relevance."
     try:
-        answer = evaluate_prompt(text)
-        position = extract_position(answer)
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.5,
+            max_tokens=500
+        )
+        result_text = response.choices[0].message.content.strip()
+        position = extract_position(result_text)
+        return result_text, position
+    except Exception as e:
+        log(f"❌ Error evaluating prompt '{prompt}': {e}")
+        return None, None
 
-        print(f"🔢 Parsed position: {position if position is not None else 'None'}")
-
+# Upload results to Supabase
+def upload_result(prompt_id, result_text, position, brand, original_prompt):
+    log(f"📤 Uploading result to Supabase...")
+    try:
         data = {
             "id": str(uuid.uuid4()),
             "prompt_id": prompt_id,
-            "user_id": prompt.get("user_id", "00000000-0000-0000-0000-000000000001"),
-            "response": answer,
-            "position": position,  # Will be null if not in top 10
-            "is_competitor": False,
+            "user_id": "00000000-0000-0000-0000-000000000001",
+            "response": result_text,
+            "position": position,
+            "success": position is not None,
             "date": datetime.utcnow().date().isoformat(),
             "brand": brand,
-            "query": text,
+            "prompt_text": original_prompt,
             "created_at": datetime.utcnow().isoformat()
         }
-
-        result = supabase.table("prompt_results").insert(data).execute()
-
-        if result.status_code == 201:
-            print(f"✅ Uploaded result for: '{text}'")
+        res = supabase.table("prompt_results").insert(data).execute()
+        if res.status_code == 201:
+            log(f"✅ Uploaded result for: '{original_prompt}'")
         else:
-            print(f"❌ Upload failed: {result.status_code} → {result.data}")
-
+            log(f"❌ Upload failed: {res.status_code} → {res.json()}")
     except Exception as e:
-        print(f"❌ Error evaluating prompt: {e}")
+        log(f"❌ Upload exception: {e}")
 
-print("✅ Done.")
+# Main process
+if __name__ == "__main__":
+    log(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+
+    log("📦 Fetching prompts from Supabase...")
+    response = supabase.table("prompts").select("id, prompt, brand").execute()
+
+    if response.status_code == 200:
+        prompts = response.data
+        log(f"📦 Found {len(prompts)} prompts")
+
+        for entry in prompts:
+            prompt_id = entry['id']
+            prompt_text = entry['prompt']
+            brand = entry['brand']
+
+            log(f"🧠 Evaluating prompt: '{prompt_text}' for brand: {brand}")
+            result_text, position = evaluate_prompt(prompt_text, brand)
+
+            if result_text:
+                upload_result(prompt_id, result_text, position, brand, prompt_text)
+    else:
+        log(f"❌ Failed to fetch prompts: {response.status_code} → {response.json()}")
+
+    log("✅ Done.")
