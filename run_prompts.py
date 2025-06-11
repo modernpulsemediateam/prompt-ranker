@@ -1,3 +1,4 @@
+
 import os
 import openai
 import requests
@@ -18,18 +19,25 @@ def log(msg):
 
 # Extract position from AI response (1–10 only, else "Not Found")
 def extract_position(response_text, target_brand):
+    log(f"🔍 Analyzing response for brand '{target_brand}':")
+    log(f"🔍 Full AI response: {response_text[:200]}...")
+    
     lines = response_text.strip().splitlines()
     for line in lines:
         match = re.match(r"(\d+)\.\s", line.strip())
         if match:
             num = int(match.group(1))
+            log(f"🔍 Found numbered line {num}: {line.strip()}")
+            
             # Check if this line mentions the target brand
             if target_brand.lower() in line.lower():
+                log(f"🔍 Brand '{target_brand}' found at position {num}")
                 if 1 <= num <= 10:
+                    log(f"🔍 Position {num} is valid (1-10), returning: {str(num)}")
                     return str(num)  # Return as string for positions 1-10
                 else:
                     # Found the brand but it's at position 11+ - return "Not Found"
-                    log(f"🔍 Brand found at position {num} (>10), marking as 'Not Found'")
+                    log(f"🔍 Position {num} is >10, converting to 'Not Found'")
                     return "Not Found"
     
     # Brand not found at all in any numbered list
@@ -48,6 +56,7 @@ def evaluate_prompt(prompt, brand):
         )
         result_text = response.choices[0].message.content.strip()
         position = extract_position(result_text, brand)
+        log(f"🔍 Final position determined: '{position}' (type: {type(position)})")
         return result_text, position
     except Exception as e:
         log(f"❌ Error evaluating prompt '{prompt}': {e}")
@@ -55,11 +64,18 @@ def evaluate_prompt(prompt, brand):
 
 # Upload results to Supabase
 def upload_result(prompt_id, result_text, position, brand, original_prompt):
-    log(f"📤 Uploading result to Supabase with position: {position}")
+    log(f"📤 About to upload to Supabase:")
+    log(f"📤 Position value: '{position}' (type: {type(position)})")
+    log(f"📤 Position == 'Not Found': {position == 'Not Found'}")
+    log(f"📤 Position != 'Not Found': {position != 'Not Found'}")
+    
     try:
         # Convert position to determine success and brand_mentioned
         is_ranked = position != "Not Found" and position is not None
         brand_mentioned = is_ranked
+        
+        log(f"📤 is_ranked: {is_ranked}")
+        log(f"📤 brand_mentioned: {brand_mentioned}")
         
         data = {
             "id": str(uuid.uuid4()),
@@ -72,9 +88,13 @@ def upload_result(prompt_id, result_text, position, brand, original_prompt):
             "prompt_text": original_prompt,
             "created_at": datetime.utcnow().isoformat()
         }
+        
+        log(f"📤 Final data being sent to Supabase: {data}")
+        
         res = supabase.table("prompt_results").insert(data).execute()
         if res.data:
             log(f"✅ Uploaded result for: '{original_prompt}' - Position: {position}")
+            log(f"✅ Supabase response: {res.data}")
         else:
             log(f"❌ Upload failed: {res}")
     except Exception as e:
@@ -106,6 +126,7 @@ if __name__ == "__main__":
 
             if result_text:
                 upload_result(prompt_id, result_text, position, brand_name, prompt_text)
+                log("=" * 80)  # Separator between entries
     else:
         log(f"❌ Failed to fetch prompts: {response}")
 
