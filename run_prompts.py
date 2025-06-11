@@ -77,6 +77,9 @@ def main():
             else:
                 position = "Not Ranking"
 
+            if position == "11":  # catch any accidental fallback
+                position = "Not Ranking"
+
             upload_result(prompt_id, brand_id, prompt_text, result, position)
         else:
             print(f"⚠️ No result returned for prompt: {prompt_text}")
