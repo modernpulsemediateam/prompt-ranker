@@ -3,7 +3,6 @@ import requests
 import os
 from datetime import datetime
 
-# Load environment variables
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -44,6 +43,7 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position):
         "position": str(position),
         "created_at": datetime.utcnow().isoformat()
     }
+    print(f"⬆️ Uploading: {position} for {prompt_text}")
     response = requests.post(
         f"{SUPABASE_URL}/rest/v1/prompt_results",
         headers={**headers, "Content-Type": "application/json"},
@@ -64,21 +64,23 @@ def main():
         prompt_id = prompt["id"]
         brand_name = prompt.get("brand", {}).get("name", "").strip().lower()
 
-        print(f"🧐 Evaluating prompt: {prompt_text} for brand: {brand_name}")
+        print(f"🧐 Prompt: {prompt_text}")
+        print(f"🔍 Brand: {brand_name}")
 
         result = run_prompt(prompt_text)
 
         if isinstance(result, str):
-            result_lower = result.lower()
-            if brand_name and brand_name in result_lower:
+            print(f"🧠 AI Output:\n{result}")
+            if brand_name and brand_name in result.lower():
                 position = "1"
             else:
-                position = "0"  # Changed from "Not Ranking" to "0"
+                position = "0"  # fallback
         else:
-            position = "0"  # Default to "0" if no result returned
+            position = "0"
 
-        # Handle incorrect fallback just in case
+        # Just in case ANYTHING tries to return 11 again
         if position == "11":
+            print("⚠️ Invalid position 11 detected, forcing to 0")
             position = "0"
 
         upload_result(prompt_id, brand_id, prompt_text, result, position)
