@@ -76,32 +76,28 @@ def extract_position(response_text, target_brand):
     log(f"🔍 AI response excerpt: {response_text[:300]}...")
     
     lines = response_text.strip().splitlines()
-    for line in lines:
-        # Look for numbered positions in the analysis
-        match = re.search(r"position\s*(\d+)", line.lower())
+    for line_num, line in enumerate(lines, 1):
+        # Look for numbered list format (1., 2., etc.)
+        match = re.match(r"(\d+)\.\s*(.+)", line.strip())
         if match:
             position = int(match.group(1))
-            if target_brand.lower() in line.lower():
-                log(f"🔍 Brand '{target_brand}' found at position {position}")
+            company_info = match.group(2).lower()
+            
+            # Check if target brand is mentioned in this ranked position
+            if target_brand.lower() in company_info:
                 if 1 <= position <= 10:
+                    log(f"🔍 Brand '{target_brand}' found at position {position}")
                     return str(position)
                 else:
+                    log(f"🔍 Brand '{target_brand}' found but at position {position} (>10), marking as Not Found")
                     return "Not Found"
-        
-        # Also check for direct numbered list format
-        match = re.match(r"(\d+)\.\s", line.strip())
-        if match:
-            num = int(match.group(1))
-            if target_brand.lower() in line.lower() and 1 <= num <= 10:
-                log(f"🔍 Brand '{target_brand}' found at position {num}")
-                return str(num)
     
     # Check if brand is mentioned but no position found
     if target_brand.lower() in response_text.lower():
-        log(f"🔍 Brand '{target_brand}' mentioned but no clear position found")
+        log(f"🔍 Brand '{target_brand}' mentioned but no clear ranking position found")
         return "Not Found"
     
-    log(f"🔍 Brand '{target_brand}' not found in search results")
+    log(f"🔍 Brand '{target_brand}' not found in AI ranking")
     return "Not Found"
 
 # Evaluate a single prompt using real search data
@@ -118,32 +114,35 @@ def evaluate_prompt(prompt, brand):
     # Format results for AI analysis
     formatted_results = format_search_results_for_ai(search_results)
     
-    # Create prompt for AI analysis
-    analysis_prompt = f"""You are analyzing real search results to determine brand positioning.
+    # Create ChatGPT-style prompt for AI analysis
+    analysis_prompt = f"""Based on the search results below, please list the top companies/brands for the keyword "{prompt}". 
 
-Search Query: "{prompt}"
-Target Brand: "{brand}"
-
-Here are the actual search results from Brave Search:
+Here are the current search results:
 
 {formatted_results}
 
-Please analyze these results and determine:
-1. If the brand "{brand}" appears in any of these search results
-2. If yes, what position (1-10) it appears at based on the numbered list above
-3. Provide a brief analysis of the brand's visibility for this search query
+Your task is to:
+1. Analyze these search results
+2. Rank the top companies/brands mentioned for this keyword in order of relevance and authority
+3. Provide a numbered list (1-10) of the best companies for "{prompt}" based on these results
+4. Focus on actual companies/brands, not just informational websites
 
-Be specific about the position number if the brand is found."""
+Please respond with a clear numbered list format like:
+1. Company Name - brief reason
+2. Company Name - brief reason
+etc.
+
+Target brand to pay special attention to: {brand}"""
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a search result analyst. Analyze the provided search results and determine brand positioning accurately."},
+                {"role": "system", "content": "You are an expert business analyst who ranks companies based on search results. Provide clear, numbered rankings of the top companies for any given keyword."},
                 {"role": "user", "content": analysis_prompt}
             ],
-            temperature=0.2,
-            max_tokens=800
+            temperature=0.3,
+            max_tokens=1000
         )
         result_text = response.choices[0].message.content.strip()
         position = extract_position(result_text, brand)
@@ -153,71 +152,5 @@ Be specific about the position number if the brand is found."""
         log(f"❌ Error analyzing search results for '{prompt}': {e}")
         return None, None
 
-# Upload results to Supabase
-def upload_result(prompt_id, result_text, position, brand, original_prompt):
-    log(f"📤 About to upload to Supabase:")
-    log(f"📤 Position value: '{position}' (type: {type(position)})")
-    
-    try:
-        # Convert position to determine success and brand_mentioned
-        is_ranked = position != "Not Found" and position is not None
-        brand_mentioned = is_ranked
-        
-        log(f"📤 is_ranked: {is_ranked}")
-        log(f"📤 brand_mentioned: {brand_mentioned}")
-        
-        data = {
-            "id": str(uuid.uuid4()),
-            "prompt_id": prompt_id,
-            "ai_result": result_text,
-            "position": position,
-            "brand_mentioned": brand_mentioned,
-            "run_date": datetime.utcnow().date().isoformat(),
-            "brand_name": brand,
-            "prompt_text": original_prompt,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        log(f"📤 Final data being sent to Supabase: {data}")
-        
-        res = supabase.table("prompt_results").insert(data).execute()
-        if res.data:
-            log(f"✅ Uploaded result for: '{original_prompt}' - Position: {position}")
-            log(f"✅ Supabase response: {res.data}")
-        else:
-            log(f"❌ Upload failed: {res}")
-    except Exception as e:
-        log(f"❌ Upload exception: {e}")
-
-# Main process
-if __name__ == "__main__":
-    log(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
-
-    log("📦 Fetching prompts from Supabase...")
-    response = supabase.table("prompts").select("id, prompt_text, brand_id").execute()
-
-    if response.data:
-        prompts = response.data
-        log(f"📦 Found {len(prompts)} prompts")
-
-        # Fetch brands to get brand names
-        brands_response = supabase.table("brands").select("id, name").execute()
-        brands_dict = {brand['id']: brand['name'] for brand in brands_response.data} if brands_response.data else {}
-
-        for entry in prompts:
-            prompt_id = entry['id']
-            prompt_text = entry['prompt_text']
-            brand_id = entry['brand_id']
-            brand_name = brands_dict.get(brand_id, "Unknown Brand")
-
-            log(f"🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
-            result_text, position = evaluate_prompt(prompt_text, brand_name)
-
-            if result_text:
-                upload_result(prompt_id, result_text, position, brand_name, prompt_text)
-                log("=" * 80)  # Separator between entries
-    else:
-        log(f"❌ Failed to fetch prompts: {response}")
-
-    log("✅ Done.")
+# ... keep existing code (upload_result function and main process)
 </lov-write>
