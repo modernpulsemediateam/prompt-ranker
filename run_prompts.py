@@ -35,14 +35,16 @@ def run_prompt(prompt_text):
         return f"Error: {str(e)}"
 
 def get_position_from_result(result_text, brand_name):
-    # Split into lines and check line-by-line for the brand
     lines = result_text.lower().split("\n")
     for idx, line in enumerate(lines):
         if brand_name in line:
-            return str(idx + 1)  # 1-based position
-    return None  # Not found
+            return str(idx + 1)
+    return None
 
 def upload_result(prompt_id, brand_id, prompt_text, result, position=None):
+    if position == "11":  # 🚫 Safety net to prevent bad data
+        position = None
+
     payload = {
         "prompt_id": prompt_id,
         "brand_id": brand_id,
@@ -51,7 +53,7 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position=None):
         "created_at": datetime.utcnow().isoformat()
     }
     if position is not None:
-        payload["position"] = str(position)
+        payload["position"] = position
 
     print(f"⬆️ Uploading: position={position} for prompt: {prompt_text}")
     response = requests.post(
@@ -83,10 +85,4 @@ def main():
         if isinstance(result, str) and brand_name:
             position = get_position_from_result(result, brand_name)
 
-        upload_result(prompt_id, brand_id, prompt_text, result, position)
-
-    print("✅ Done.")
-
-if __name__ == "__main__":
-    print(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
-    main()
+        upload_result(prompt_id, brand
