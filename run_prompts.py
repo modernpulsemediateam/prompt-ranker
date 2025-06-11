@@ -1,6 +1,6 @@
-import os
-import openai
+from openai import OpenAI
 import requests
+import os
 from datetime import datetime
 
 # Load environment variables
@@ -8,7 +8,7 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 headers = {
     "apikey": SUPABASE_SERVICE_ROLE_KEY,
@@ -27,14 +27,13 @@ def fetch_prompts():
 
 def run_prompt(prompt_text):
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt_text}],
+            messages=[{"role": "user", "content": prompt_text}]
         )
-        return response.choices[0].message["content"]
+        return response.choices[0].message.content
     except Exception as e:
-        print(f"⚠️ Error with '{prompt_text}':", str(e))
-        return None
+        return f"Error: {str(e)}"
 
 def upload_result(prompt_id, brand_id, prompt_text, result, position):
     payload = {
@@ -69,20 +68,20 @@ def main():
 
         result = run_prompt(prompt_text)
 
-        if result:
+        if isinstance(result, str):
             result_lower = result.lower()
-
             if brand_name and brand_name in result_lower:
                 position = "1"
             else:
                 position = "Not Ranking"
-
-            if position == "11":  # catch any accidental fallback
-                position = "Not Ranking"
-
-            upload_result(prompt_id, brand_id, prompt_text, result, position)
         else:
-            print(f"⚠️ No result returned for prompt: {prompt_text}")
+            position = "Error"
+
+        # Handle incorrect fallback just in case
+        if position == "11":
+            position = "Not Ranking"
+
+        upload_result(prompt_id, brand_id, prompt_text, result, position)
 
     print("✅ Done.")
 
