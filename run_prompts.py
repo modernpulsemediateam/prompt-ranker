@@ -1,29 +1,28 @@
-pip install openai requests supabase-py
 import os
 import openai
 import requests
 import uuid
 import hashlib
 from datetime import datetime
-from supabase import create_client, Client
+from supabase_py import create_client, Client  # ✅ Corrected import
 import re
 
-# ENV VARS (Set in GitHub Secrets)
+# 🔐 Load environment variables from GitHub Actions
 openai.api_key = os.environ["OPENAI_API_KEY"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 BRAVE_API_KEY = os.environ["BRAVE_API_KEY"]
 
-# Init Supabase
+# 🌐 Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Brave API Endpoint
+# 🌍 Brave API endpoint
 BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
 def log(msg):
     print(msg, flush=True)
 
-# 🔍 Check cache or call Brave
+# 🔍 Get Brave results (with cache lookup)
 def get_brave_results(query, count=5):
     query_hash = hashlib.md5(query.encode()).hexdigest()
     try:
@@ -44,6 +43,7 @@ def get_brave_results(query, count=5):
         response.raise_for_status()
         results = response.json().get("web", {}).get("results", [])
 
+        # 🧠 Save cache
         supabase.table("brave_search_cache").insert({
             "query_hash": query_hash,
             "query": query,
@@ -56,7 +56,7 @@ def get_brave_results(query, count=5):
         log(f"❌ Brave API error: {e}")
         return []
 
-# 🧠 Format for GPT context
+# 📄 Format results into string for GPT prompt
 def format_search_results(results):
     formatted = []
     for i, r in enumerate(results):
@@ -66,7 +66,7 @@ def format_search_results(results):
         formatted.append(f"{i+1}. {title} - {desc} ({url})")
     return "\n".join(formatted)
 
-# 🎯 Rank tracking logic
+# 📊 Check GPT output for brand rank
 def extract_position(text, brand):
     log(f"🔍 Parsing AI result for brand '{brand}'")
     for line in text.strip().splitlines():
@@ -76,7 +76,7 @@ def extract_position(text, brand):
                 return str(num) if 1 <= num <= 10 else "Not Found"
     return "Not Found"
 
-# 🧪 Run a prompt through GPT with Brave context
+# 🧪 Evaluate a prompt using GPT-4o with Brave results
 def evaluate_prompt(prompt, brand):
     brave_results = get_brave_results(prompt)
     search_context = format_search_results(brave_results)
@@ -103,7 +103,7 @@ Does '{brand}' appear? Include them if they are relevant.
         log(f"❌ GPT error: {e}")
         return None, None
 
-# ☁️ Upload to Supabase
+# ☁️ Upload result to Supabase
 def upload_result(prompt_id, result_text, position, brand, original_prompt):
     try:
         is_ranked = position != "Not Found"
@@ -122,7 +122,7 @@ def upload_result(prompt_id, result_text, position, brand, original_prompt):
     except Exception as e:
         log(f"❌ Upload error: {e}")
 
-# 🚀 Main runner
+# 🚀 Run the pipeline for all prompts
 if __name__ == "__main__":
     log(f"🚀 Running prompt ranker @ {datetime.utcnow().isoformat()}")
     response = supabase.table("prompts").select("id, prompt_text, brand_id").execute()
