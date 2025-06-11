@@ -17,17 +17,17 @@ def log(msg):
     print(msg, flush=True)
 
 # Extract position from AI response (1–10 only, else None)
-def extract_position(response_text):
+def extract_position(response_text, target_brand):
     lines = response_text.strip().splitlines()
     for line in lines:
         match = re.match(r"(\d+)\.\s", line.strip())
         if match:
             num = int(match.group(1))
             if 1 <= num <= 10:
-                return num
-            else:
-                return None
-    return None
+                # Check if this line mentions the target brand
+                if target_brand.lower() in line.lower():
+                    return num
+    return None  # Brand not found in positions 1-10
 
 # Evaluate a single prompt
 def evaluate_prompt(prompt, brand):
@@ -40,7 +40,7 @@ def evaluate_prompt(prompt, brand):
             max_tokens=500
         )
         result_text = response.choices[0].message.content.strip()
-        position = extract_position(result_text)
+        position = extract_position(result_text, brand)
         return result_text, position
     except Exception as e:
         log(f"❌ Error evaluating prompt '{prompt}': {e}")
