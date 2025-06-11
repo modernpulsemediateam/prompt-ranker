@@ -42,7 +42,7 @@ def upload_result(prompt_id, brand_id, prompt_text, result, position):
         "brand_id": brand_id,
         "prompt_text": prompt_text,
         "result": result,
-        "position": str(position),  # Always store as string, including 'Not Found'
+        "position": str(position),
         "created_at": datetime.utcnow().isoformat()
     }
     response = requests.post(
@@ -63,16 +63,20 @@ def main():
         prompt_text = prompt["prompt_text"]
         brand_id = prompt["brand_id"]
         prompt_id = prompt["id"]
-        brand_name = prompt.get("brand", {}).get("name", "Unknown")
+        brand_name = prompt.get("brand", {}).get("name", "").strip().lower()
 
         print(f"🧐 Evaluating prompt: {prompt_text} for brand: {brand_name}")
 
         result = run_prompt(prompt_text)
+
         if result:
-            if brand_name.lower() in result.lower():
-                position = "1"  # Found at top position
+            result_lower = result.lower()
+
+            if brand_name and brand_name in result_lower:
+                position = "1"
             else:
-                position = "Not Found"  # Explicit label when not found
+                position = "Not Ranking"
+
             upload_result(prompt_id, brand_id, prompt_text, result, position)
         else:
             print(f"⚠️ No result returned for prompt: {prompt_text}")
