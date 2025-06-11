@@ -34,6 +34,14 @@ def run_prompt(prompt_text):
     except Exception as e:
         return f"Error: {str(e)}"
 
+def get_position_from_result(result_text, brand_name):
+    # Split into lines and check line-by-line for the brand
+    lines = result_text.lower().split("\n")
+    for idx, line in enumerate(lines):
+        if brand_name in line:
+            return str(idx + 1)  # 1-based position
+    return None  # Not found
+
 def upload_result(prompt_id, brand_id, prompt_text, result, position=None):
     payload = {
         "prompt_id": prompt_id,
@@ -72,10 +80,8 @@ def main():
         result = run_prompt(prompt_text)
         position = None
 
-        if isinstance(result, str):
-            result_lower = result.lower()
-            if brand_name and brand_name in result_lower:
-                position = "1"
+        if isinstance(result, str) and brand_name:
+            position = get_position_from_result(result, brand_name)
 
         upload_result(prompt_id, brand_id, prompt_text, result, position)
 
