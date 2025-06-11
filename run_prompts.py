@@ -73,13 +73,13 @@ def main():
             if brand_name and brand_name in result_lower:
                 position = "1"
             else:
-                position = "Not Ranking"
+                position = "0"  # Changed from "Not Ranking" to "0"
         else:
-            position = "Error"
+            position = "0"  # Default to "0" if no result returned
 
         # Handle incorrect fallback just in case
         if position == "11":
-            position = "Not Ranking"
+            position = "0"
 
         upload_result(prompt_id, brand_id, prompt_text, result, position)
 
