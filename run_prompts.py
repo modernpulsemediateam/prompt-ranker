@@ -4,11 +4,11 @@ import requests
 import uuid
 import hashlib
 from datetime import datetime
-from supabase_py import create_client, Client  # ✅ Corrected import
+from supabase import create_client, Client
 import re
 
 # 🔐 Load environment variables from GitHub Actions
-openai.api_key = os.environ["OPENAI_API_KEY"]
+client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 BRAVE_API_KEY = os.environ["BRAVE_API_KEY"]
@@ -89,7 +89,7 @@ Now, based on the query and these results, rank the most relevant businesses or 
 Does '{brand}' appear? Include them if they are relevant.
 """
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": full_prompt}],
             temperature=0.5,
