@@ -1,56 +1,50 @@
+pip install openai requests supabase-py
 import os
 import openai
 import requests
 import uuid
+import hashlib
 from datetime import datetime
 from supabase import create_client, Client
 import re
-import hashlib
 
-# Set up OpenAI and Supabase
-openai.api_key = os.environ['OPENAI_API_KEY']
-SUPABASE_URL = os.environ['SUPABASE_URL']
-SUPABASE_KEY = os.environ['SUPABASE_KEY']
-BRAVE_API_KEY = os.environ['BRAVE_API_KEY']  # ✅ Store this in GitHub as "BRAVE_API_KEY"
+# ENV VARS (Set in GitHub Secrets)
+openai.api_key = os.environ["OPENAI_API_KEY"]
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+BRAVE_API_KEY = os.environ["BRAVE_API_KEY"]
+
+# Init Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Brave API Endpoint
 BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
-# Logging helper
 def log(msg):
     print(msg, flush=True)
 
-# Brave Search + Cache
+# 🔍 Check cache or call Brave
 def get_brave_results(query, count=5):
     query_hash = hashlib.md5(query.encode()).hexdigest()
-    cache_table = "brave_search_cache"
-
-    # Try to fetch from cache first
-    log(f"🗂️ Checking cache for query: '{query}'")
     try:
-        cache_response = supabase.table(cache_table).select("results").eq("query_hash", query_hash).single().execute()
-        if cache_response.data:
-            log(f"✅ Cache hit for query: '{query}'")
-            return cache_response.data['results']
+        cache = supabase.table("brave_search_cache").select("results").eq("query_hash", query_hash).single().execute()
+        if cache.data:
+            log(f"✅ Cache hit for: {query}")
+            return cache.data["results"]
     except:
-        log(f"🆕 No cache found for: '{query}', calling Brave Search")
+        log(f"ℹ️ No cache for: {query}, calling Brave API")
 
-    # Call Brave Search API if not cached
     headers = {
         "Accept": "application/json",
         "X-Subscription-Token": BRAVE_API_KEY
     }
-    params = {
-        "q": query,
-        "count": count
-    }
+    params = {"q": query, "count": count}
     try:
         response = requests.get(BRAVE_API_URL, headers=headers, params=params)
         response.raise_for_status()
         results = response.json().get("web", {}).get("results", [])
 
-        # Cache the results
-        supabase.table(cache_table).insert({
+        supabase.table("brave_search_cache").insert({
             "query_hash": query_hash,
             "query": query,
             "results": results,
@@ -59,41 +53,33 @@ def get_brave_results(query, count=5):
 
         return results
     except Exception as e:
-        log(f"❌ Error fetching Brave search results: {e}")
+        log(f"❌ Brave API error: {e}")
         return []
 
-# Format results for GPT
+# 🧠 Format for GPT context
 def format_search_results(results):
     formatted = []
-    for i, result in enumerate(results):
-        title = result.get("title", "")
-        desc = result.get("description", "")
-        url = result.get("url", "")
+    for i, r in enumerate(results):
+        title = r.get("title", "")
+        desc = r.get("description", "")
+        url = r.get("url", "")
         formatted.append(f"{i+1}. {title} - {desc} ({url})")
     return "\n".join(formatted)
 
-# Extract brand position
-def extract_position(response_text, target_brand):
-    log(f"🔍 Analyzing response for brand '{target_brand}':")
-    log(f"🔍 Full AI response: {response_text[:200]}...")
-    
-    lines = response_text.strip().splitlines()
-    for line in lines:
-        match = re.match(r"(\d+)\.\s", line.strip())
-        if match:
+# 🎯 Rank tracking logic
+def extract_position(text, brand):
+    log(f"🔍 Parsing AI result for brand '{brand}'")
+    for line in text.strip().splitlines():
+        if match := re.match(r"(\d+)\.\s", line.strip()):
             num = int(match.group(1))
-            log(f"🔍 Found numbered line {num}: {line.strip()}")
-            if target_brand.lower() in line.lower():
-                log(f"🔍 Brand '{target_brand}' found at position {num}")
+            if brand.lower() in line.lower():
                 return str(num) if 1 <= num <= 10 else "Not Found"
-    log(f"🔍 Brand '{target_brand}' not found in any numbered position")
     return "Not Found"
 
-# Evaluate prompt
+# 🧪 Run a prompt through GPT with Brave context
 def evaluate_prompt(prompt, brand):
     brave_results = get_brave_results(prompt)
     search_context = format_search_results(brave_results)
-    
     full_prompt = f"""A user searched for: '{prompt}'
 
 Here are the top real-time web results:
@@ -111,59 +97,49 @@ Does '{brand}' appear? Include them if they are relevant.
         )
         result_text = response.choices[0].message.content.strip()
         position = extract_position(result_text, brand)
-        log(f"🔍 Final position determined: '{position}' (type: {type(position)})")
+        log(f"📈 '{brand}' rank: {position}")
         return result_text, position
     except Exception as e:
-        log(f"❌ Error evaluating prompt '{prompt}': {e}")
+        log(f"❌ GPT error: {e}")
         return None, None
 
-# Upload result to Supabase
+# ☁️ Upload to Supabase
 def upload_result(prompt_id, result_text, position, brand, original_prompt):
-    log(f"📤 Uploading result for: {original_prompt}")
     try:
-        is_ranked = position != "Not Found" and position is not None
-        brand_mentioned = is_ranked
-        data = {
+        is_ranked = position != "Not Found"
+        supabase.table("prompt_results").insert({
             "id": str(uuid.uuid4()),
             "prompt_id": prompt_id,
             "ai_result": result_text,
             "position": position,
-            "brand_mentioned": brand_mentioned,
+            "brand_mentioned": is_ranked,
             "run_date": datetime.utcnow().date().isoformat(),
             "brand_name": brand,
             "prompt_text": original_prompt,
             "created_at": datetime.utcnow().isoformat()
-        }
-        res = supabase.table("prompt_results").insert(data).execute()
-        if res.data:
-            log(f"✅ Uploaded result: {data}")
-        else:
-            log(f"❌ Upload failed: {res}")
+        }).execute()
+        log(f"✅ Uploaded result for prompt: {original_prompt}")
     except Exception as e:
-        log(f"❌ Upload exception: {e}")
+        log(f"❌ Upload error: {e}")
 
-# Main loop
+# 🚀 Main runner
 if __name__ == "__main__":
-    log(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+    log(f"🚀 Running prompt ranker @ {datetime.utcnow().isoformat()}")
     response = supabase.table("prompts").select("id, prompt_text, brand_id").execute()
-
     if response.data:
-        prompts = response.data
-        brands_response = supabase.table("brands").select("id, name").execute()
-        brands_dict = {b['id']: b['name'] for b in brands_response.data} if brands_response.data else {}
+        brands = supabase.table("brands").select("id, name").execute()
+        brand_lookup = {b["id"]: b["name"] for b in brands.data} if brands.data else {}
 
-        for entry in prompts:
-            prompt_id = entry['id']
-            prompt_text = entry['prompt_text']
-            brand_id = entry['brand_id']
-            brand_name = brands_dict.get(brand_id, "Unknown Brand")
+        for p in response.data:
+            prompt_id = p["id"]
+            prompt_text = p["prompt_text"]
+            brand_id = p["brand_id"]
+            brand_name = brand_lookup.get(brand_id, "Unknown Brand")
 
-            log(f"🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
+            log(f"🧠 Evaluating: {prompt_text} → {brand_name}")
             result_text, position = evaluate_prompt(prompt_text, brand_name)
             if result_text:
                 upload_result(prompt_id, result_text, position, brand_name, prompt_text)
-                log("=" * 80)
+                log("=" * 60)
     else:
-        log(f"❌ Failed to fetch prompts from Supabase")
-
-    log("✅ Done.")
+        log("❌ No prompts found.")
