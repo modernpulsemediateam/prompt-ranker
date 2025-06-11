@@ -1,4 +1,3 @@
-
 import os
 import openai
 import requests
@@ -59,6 +58,92 @@ def get_brave_search_results(query, count=10):
         log(f"❌ Error calling Brave API: {e}")
         return []
 
+# Upload Google search results to database
+def upload_google_results(prompt_text, brand_name, search_results):
+    """Upload Google search results to the google_results table"""
+    log(f"📤 Uploading Google results for: '{prompt_text}' - Brand: {brand_name}")
+    
+    try:
+        # Check if brand appears in search results
+        brand_found_position = None
+        
+        for i, result in enumerate(search_results, 1):
+            title = result.get('title', '').lower()
+            description = result.get('description', '').lower()
+            url = result.get('url', '').lower()
+            
+            # Check if brand name appears in title, description, or URL
+            if (brand_name.lower() in title or 
+                brand_name.lower() in description or 
+                brand_name.lower() in url):
+                brand_found_position = i
+                break
+        
+        # Upload the brand's result if found, or mark as not found
+        data = {
+            "id": str(uuid.uuid4()),
+            "brand_name": brand_name,
+            "prompt_text": prompt_text,
+            "position": brand_found_position,
+            "url": search_results[brand_found_position - 1].get('url') if brand_found_position else None,
+            "title": search_results[brand_found_position - 1].get('title') if brand_found_position else None,
+            "description": search_results[brand_found_position - 1].get('description') if brand_found_position else None,
+            "run_date": datetime.utcnow().date().isoformat(),
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        res = supabase.table("google_results").insert(data).execute()
+        if res.data:
+            log(f"✅ Uploaded Google result - Position: {brand_found_position or 'Not Found'}")
+        else:
+            log(f"❌ Google upload failed: {res}")
+            
+    except Exception as e:
+        log(f"❌ Google upload exception: {e}")
+
+# Upload Bing search results to database
+def upload_bing_results(prompt_text, brand_name, search_results):
+    """Upload Bing search results to the bing_results table"""
+    log(f"📤 Uploading Bing results for: '{prompt_text}' - Brand: {brand_name}")
+    
+    try:
+        # Check if brand appears in search results
+        brand_found_position = None
+        
+        for i, result in enumerate(search_results, 1):
+            title = result.get('title', '').lower()
+            description = result.get('description', '').lower()
+            url = result.get('url', '').lower()
+            
+            # Check if brand name appears in title, description, or URL
+            if (brand_name.lower() in title or 
+                brand_name.lower() in description or 
+                brand_name.lower() in url):
+                brand_found_position = i
+                break
+        
+        # Upload the brand's result if found, or mark as not found
+        data = {
+            "id": str(uuid.uuid4()),
+            "brand_name": brand_name,
+            "prompt_text": prompt_text,
+            "position": brand_found_position,
+            "url": search_results[brand_found_position - 1].get('url') if brand_found_position else None,
+            "title": search_results[brand_found_position - 1].get('title') if brand_found_position else None,
+            "description": search_results[brand_found_position - 1].get('description') if brand_found_position else None,
+            "run_date": datetime.utcnow().date().isoformat(),
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        res = supabase.table("bing_results").insert(data).execute()
+        if res.data:
+            log(f"✅ Uploaded Bing result - Position: {brand_found_position or 'Not Found'}")
+        else:
+            log(f"❌ Bing upload failed: {res}")
+            
+    except Exception as e:
+        log(f"❌ Bing upload exception: {e}")
+
 # Format search results for AI analysis
 def format_search_results_for_ai(search_results):
     formatted_results = []
@@ -111,6 +196,10 @@ def evaluate_prompt(prompt, brand):
         log(f"❌ No search results found for '{prompt}'")
         return None, None
     
+    # Upload to Google and Bing tables (using Brave data as proxy for both)
+    upload_google_results(prompt, brand, search_results)
+    upload_bing_results(prompt, brand, search_results)
+    
     # Format results for AI analysis
     formatted_results = format_search_results_for_ai(search_results)
     
@@ -152,5 +241,72 @@ Target brand to pay special attention to: {brand}"""
         log(f"❌ Error analyzing search results for '{prompt}': {e}")
         return None, None
 
-# ... keep existing code (upload_result function and main process)
+# Upload AI results to Supabase
+def upload_result(prompt_id, result_text, position, brand, original_prompt):
+    log(f"📤 About to upload AI result to Supabase:")
+    log(f"📤 Position value: '{position}' (type: {type(position)})")
+    
+    try:
+        # Convert position to determine success and brand_mentioned
+        is_ranked = position != "Not Found" and position is not None
+        brand_mentioned = is_ranked
+        
+        log(f"📤 is_ranked: {is_ranked}")
+        log(f"📤 brand_mentioned: {brand_mentioned}")
+        
+        data = {
+            "id": str(uuid.uuid4()),
+            "prompt_id": prompt_id,
+            "ai_result": result_text,
+            "position": position,
+            "brand_mentioned": brand_mentioned,
+            "run_date": datetime.utcnow().date().isoformat(),
+            "brand_name": brand,
+            "prompt_text": original_prompt,
+            "tracking_type": "ai",  # Mark as AI tracking
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        log(f"📤 Final AI data being sent to Supabase: {data}")
+        
+        res = supabase.table("prompt_results").insert(data).execute()
+        if res.data:
+            log(f"✅ Uploaded AI result for: '{original_prompt}' - Position: {position}")
+            log(f"✅ Supabase response: {res.data}")
+        else:
+            log(f"❌ AI upload failed: {res}")
+    except Exception as e:
+        log(f"❌ AI upload exception: {e}")
+
+# Main process
+if __name__ == "__main__":
+    log(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+
+    log("📦 Fetching prompts from Supabase...")
+    response = supabase.table("prompts").select("id, prompt_text, brand_id").execute()
+
+    if response.data:
+        prompts = response.data
+        log(f"📦 Found {len(prompts)} prompts")
+
+        # Fetch brands to get brand names
+        brands_response = supabase.table("brands").select("id, name").execute()
+        brands_dict = {brand['id']: brand['name'] for brand in brands_response.data} if brands_response.data else {}
+
+        for entry in prompts:
+            prompt_id = entry['id']
+            prompt_text = entry['prompt_text']
+            brand_id = entry['brand_id']
+            brand_name = brands_dict.get(brand_id, "Unknown Brand")
+
+            log(f"🧠 Evaluating prompt: '{prompt_text}' for brand: {brand_name}")
+            result_text, position = evaluate_prompt(prompt_text, brand_name)
+
+            if result_text:
+                upload_result(prompt_id, result_text, position, brand_name, prompt_text)
+                log("=" * 80)  # Separator between entries
+    else:
+        log(f"❌ Failed to fetch prompts: {response}")
+
+    log("✅ Done.")
 </lov-write>
