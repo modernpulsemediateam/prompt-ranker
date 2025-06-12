@@ -1,3 +1,4 @@
+
 import os
 import openai
 import requests
@@ -17,6 +18,18 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Logging helper
 def log(msg):
     print(msg, flush=True)
+
+# Test Supabase connection
+def test_supabase_connection():
+    log("🔗 Testing Supabase connection...")
+    try:
+        # Test connection by attempting to read from brands table
+        response = supabase.table("brands").select("id").limit(1).execute()
+        log(f"✅ Supabase connection successful. Response: {response}")
+        return True
+    except Exception as e:
+        log(f"❌ Supabase connection failed: {e}")
+        return False
 
 # Get real search results from Brave Search API
 def get_brave_search_results(query, count=10):
@@ -72,7 +85,7 @@ def upload_google_results(prompt_text, brand_name, search_results):
     
     if not search_results:
         log(f"❌ No search results to upload for Google")
-        return
+        return False
     
     try:
         # Check if brand appears in search results
@@ -98,7 +111,7 @@ def upload_google_results(prompt_text, brand_name, search_results):
         if not brand_found_position:
             log(f"❌ Brand '{brand_name}' not found in Google results")
         
-        # Upload the brand's result if found, or mark as not found
+        # ALWAYS upload data, even if brand not found
         data = {
             "id": str(uuid.uuid4()),
             "brand_name": brand_name,
@@ -111,19 +124,22 @@ def upload_google_results(prompt_text, brand_name, search_results):
             "created_at": datetime.utcnow().isoformat()
         }
         
-        log(f"📤 Uploading Google data: {data}")
+        log(f"📤 Uploading Google data: {json.dumps(data, indent=2)}")
         
         res = supabase.table("google_results").insert(data).execute()
         if res.data:
             log(f"✅ Successfully uploaded Google result - Position: {brand_found_position or 'Not Found'}")
-            log(f"✅ Google upload response: {res.data}")
+            log(f"✅ Google upload response data: {res.data}")
+            return True
         else:
             log(f"❌ Google upload failed - no data returned: {res}")
+            return False
             
     except Exception as e:
         log(f"❌ Google upload exception: {e}")
         import traceback
         log(f"❌ Google traceback: {traceback.format_exc()}")
+        return False
 
 # Upload Bing search results to database
 def upload_bing_results(prompt_text, brand_name, search_results):
@@ -132,7 +148,7 @@ def upload_bing_results(prompt_text, brand_name, search_results):
     
     if not search_results:
         log(f"❌ No search results to upload for Bing")
-        return
+        return False
     
     try:
         # Check if brand appears in search results
@@ -158,7 +174,7 @@ def upload_bing_results(prompt_text, brand_name, search_results):
         if not brand_found_position:
             log(f"❌ Brand '{brand_name}' not found in Bing results")
         
-        # Upload the brand's result if found, or mark as not found
+        # ALWAYS upload data, even if brand not found
         data = {
             "id": str(uuid.uuid4()),
             "brand_name": brand_name,
@@ -171,19 +187,22 @@ def upload_bing_results(prompt_text, brand_name, search_results):
             "created_at": datetime.utcnow().isoformat()
         }
         
-        log(f"📤 Uploading Bing data: {data}")
+        log(f"📤 Uploading Bing data: {json.dumps(data, indent=2)}")
         
         res = supabase.table("bing_results").insert(data).execute()
         if res.data:
             log(f"✅ Successfully uploaded Bing result - Position: {brand_found_position or 'Not Found'}")
-            log(f"✅ Bing upload response: {res.data}")
+            log(f"✅ Bing upload response data: {res.data}")
+            return True
         else:
             log(f"❌ Bing upload failed - no data returned: {res}")
+            return False
             
     except Exception as e:
         log(f"❌ Bing upload exception: {e}")
         import traceback
         log(f"❌ Bing traceback: {traceback.format_exc()}")
+        return False
 
 # Format search results for AI analysis
 def format_search_results_for_ai(search_results):
@@ -240,8 +259,10 @@ def evaluate_prompt(prompt, brand):
     log(f"📤 Got {len(search_results)} results, proceeding with uploads...")
     
     # Upload to Google and Bing tables (using Brave data as proxy for both)
-    upload_google_results(prompt, brand, search_results)
-    upload_bing_results(prompt, brand, search_results)
+    google_success = upload_google_results(prompt, brand, search_results)
+    bing_success = upload_bing_results(prompt, brand, search_results)
+    
+    log(f"📊 Upload results - Google: {'✅ SUCCESS' if google_success else '❌ FAILED'}, Bing: {'✅ SUCCESS' if bing_success else '❌ FAILED'}")
     
     # Format results for AI analysis
     formatted_results = format_search_results_for_ai(search_results)
@@ -311,22 +332,30 @@ def upload_result(prompt_id, result_text, position, brand, original_prompt):
             "created_at": datetime.utcnow().isoformat()
         }
         
-        log(f"📤 Final AI data being sent to Supabase: {data}")
+        log(f"📤 Final AI data being sent to Supabase: {json.dumps(data, indent=2)}")
         
         res = supabase.table("prompt_results").insert(data).execute()
         if res.data:
             log(f"✅ Uploaded AI result for: '{original_prompt}' - Position: {position}")
             log(f"✅ AI Supabase response: {res.data}")
+            return True
         else:
             log(f"❌ AI upload failed: {res}")
+            return False
     except Exception as e:
         log(f"❌ AI upload exception: {e}")
         import traceback
         log(f"❌ AI traceback: {traceback.format_exc()}")
+        return False
 
 # Main process
 if __name__ == "__main__":
     log(f"🚀 Running @ {datetime.utcnow().isoformat()} UTC")
+
+    # Test Supabase connection first
+    if not test_supabase_connection():
+        log("❌ Cannot proceed without Supabase connection")
+        exit(1)
 
     log("📦 Fetching prompts from Supabase...")
     response = supabase.table("prompts").select("id, prompt_text, brand_id").execute()
@@ -350,7 +379,8 @@ if __name__ == "__main__":
             result_text, position = evaluate_prompt(prompt_text, brand_name)
 
             if result_text:
-                upload_result(prompt_id, result_text, position, brand_name, prompt_text)
+                ai_success = upload_result(prompt_id, result_text, position, brand_name, prompt_text)
+                log(f"📊 AI upload success: {'✅ SUCCESS' if ai_success else '❌ FAILED'}")
             else:
                 log(f"❌ Skipping AI upload for '{prompt_text}' - no result text")
                 
