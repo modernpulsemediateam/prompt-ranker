@@ -1,11 +1,29 @@
+from dotenv import load_dotenv
 import os
 import uuid
 from datetime import datetime
 from supabase import create_client, Client
 
-# Set up Supabase
-SUPABASE_URL = os.environ['SUPABASE_URL']
-SUPABASE_KEY = os.environ['SUPABASE_KEY']
+load_dotenv()
+
+# Set up Supabase - handle environment variables properly
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+
+# Validate environment variables
+if not SUPABASE_URL:
+    raise ValueError("SUPABASE_URL environment variable is not set")
+if not SUPABASE_KEY:
+    raise ValueError("SUPABASE_KEY environment variable is not set")
+
+# Strip any whitespace that might have been added
+SUPABASE_URL = SUPABASE_URL.strip()
+SUPABASE_KEY = SUPABASE_KEY.strip()
+
+# Debug logging to help troubleshoot
+print(f"🔍 SUPABASE_URL: {SUPABASE_URL}")
+print(f"🔍 SUPABASE_URL length: {len(SUPABASE_URL)}")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Logging helper
@@ -35,7 +53,7 @@ def get_brands_dict():
 # Get prompts
 def get_prompts():
     log("📦 Fetching prompts from Supabase...")
-    response = supabase.table("prompts").select("id, prompt_text, brand_id").execute()
+    response = supabase.table("prompts").select("id, prompt_text, brand_id, location").execute()
     if response.data:
         log(f"📦 Found {len(response.data)} prompts")
         return response.data
